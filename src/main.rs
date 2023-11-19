@@ -1,12 +1,12 @@
 // Uncomment this block to pass the first stage
 // use std::net::UdpSocket;
 
-use std::net::UdpSocket;
+use std::{net::UdpSocket, str::FromStr};
 
 use bitvec::prelude::*;
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     println!("Logs from your program will appear here!");
 
@@ -19,7 +19,20 @@ fn main() {
             Ok((size, source)) => {
                 let _received_data = String::from_utf8_lossy(&buf[0..size]);
                 println!("Received {} bytes from {}", size, source);
-                let response = Header::TEST.to_bytes();
+                let msg = DnsMessage {
+                    header: Header {
+                        id: 1234,
+                        qr: true,
+                        qd_count: 1,
+                        ..Default::default()
+                    },
+                    questions: vec![Question {
+                        qname: "codecrafters.io".parse()?,
+                        qtype: QType::A,
+                        qclass: QClass::IN,
+                    }],
+                };
+                let response = msg.to_bytes();
                 udp_socket
                     .send_to(&response, source)
                     .expect("Failed to send response");
@@ -30,10 +43,117 @@ fn main() {
             }
         }
     }
+
+    Ok(())
 }
 
-pub struct DnsMessage(Bytes);
+pub struct DnsMessage {
+    header: Header,
+    questions: Vec<Question>,
+}
 
+impl DnsMessage {
+    pub fn to_bytes(&self) -> Bytes {
+        let mut buf = BytesMut::new();
+        buf.put(self.header.to_bytes());
+        for q in &self.questions {
+            buf.put(q.to_bytes());
+        }
+
+        buf.freeze()
+    }
+}
+
+pub struct Question {
+    qname: QName,
+    qtype: QType,
+    qclass: QClass,
+}
+
+impl Question {
+    pub fn to_bytes(&self) -> Bytes {
+        let mut buf = BytesMut::new();
+        buf.put(self.qname.to_bytes());
+        buf.put_u16(self.qtype as u16);
+        buf.put_u16(self.qclass as u16);
+
+        buf.freeze()
+    }
+}
+
+pub struct QName(Vec<Label>);
+
+impl QName {
+    pub fn to_bytes(&self) -> Bytes {
+        let mut buf = BytesMut::new();
+        for label in &self.0 {
+            buf.put(label.to_bytes());
+        }
+        buf.put_u8(0);
+
+        buf.freeze()
+    }
+}
+
+impl FromStr for QName {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let labels = s
+            .split('.')
+            .map(|label| Label(label.as_bytes().to_vec()))
+            .collect();
+        Ok(Self(labels))
+    }
+}
+
+pub struct Label(Vec<u8>);
+
+impl Label {
+    pub fn to_bytes(&self) -> Bytes {
+        let mut buf = BytesMut::new();
+        buf.put_u8(self.0.len() as u8);
+        buf.put(self.0.as_slice());
+
+        buf.freeze()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u16)]
+pub enum QType {
+    A = 1,       // a host address
+    NS = 2,      // an authoritative name server
+    MD = 3,      // a mail destination (Obsolete - use MX)
+    MF = 4,      // a mail forwarder (Obsolete - use MX)
+    CNAME = 5,   // the canonical name for an alias
+    SOA = 6,     // marks the start of a zone of authority
+    MB = 7,      // a mailbox domain name (EXPERIMENTAL)
+    MG = 8,      // a mail group member (EXPERIMENTAL)
+    MR = 9,      // a mail rename domain name (EXPERIMENTAL)
+    NULL = 10,   //  a null RR (EXPERIMENTAL)
+    WKS = 11,    //  a well known service description
+    PTR = 12,    //  a domain name pointer
+    HINFO = 13,  //  host information
+    MINFO = 14,  //  mailbox or mail list information
+    MX = 15,     //  mail exchange
+    TXT = 16,    //  text strings
+    AXFR = 252,  // A request for a transfer of an entire zone
+    MAILB = 253, // A request for mailbox-related records (MB, MG or MR)
+    MAILA = 254, // A request for mail agent RRs (Obsolete - see MX)
+    STAR = 255,  // A request for all records
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u16)]
+pub enum QClass {
+    IN = 1, // the Internet
+    CS = 2, // the CSNET class (Obsolete - used only for examples in some obsolete RFCs)
+    CH = 3, // the CHAOS class
+    HS = 4, // Hesiod [Dyer 87]
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Header {
     id: u16,
     qr: bool,
@@ -44,10 +164,10 @@ pub struct Header {
     recursion_available: bool,
     reserved: u8,
     response_code: u8,
-    question_code: u16,
-    answer_record_count: u16,
-    authority_record_count: u16,
-    additional_record_count: u16,
+    qd_count: u16,
+    an_count: u16,
+    ns_count: u16,
+    ar_count: u16,
 }
 
 impl Header {
@@ -61,10 +181,10 @@ impl Header {
         recursion_available: false,
         reserved: 0,
         response_code: 0,
-        question_code: 0,
-        answer_record_count: 0,
-        authority_record_count: 0,
-        additional_record_count: 0,
+        qd_count: 0,
+        an_count: 0,
+        ns_count: 0,
+        ar_count: 0,
     };
 
     pub fn to_bytes(&self) -> Bytes {
@@ -96,15 +216,15 @@ impl Header {
         d2[12..=15].store_be(self.response_code);
 
         let (d3, rest) = rest.split_at_mut(16);
-        d3.store_be(self.question_code);
+        d3.store_be(self.qd_count);
 
         let (d4, rest) = rest.split_at_mut(16);
-        d4.store_be(self.answer_record_count);
+        d4.store_be(self.an_count);
 
         let (d5, d6) = rest.split_at_mut(16);
-        d5.store_be(self.authority_record_count);
+        d5.store_be(self.ns_count);
 
-        d6.store_be(self.additional_record_count);
+        d6.store_be(self.ar_count);
 
         Bytes::copy_from_slice(&data)
     }
