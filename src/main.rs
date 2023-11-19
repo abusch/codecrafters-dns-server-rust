@@ -1,7 +1,10 @@
 // Uncomment this block to pass the first stage
 // use std::net::UdpSocket;
 
-use std::{net::UdpSocket, str::FromStr};
+use std::{
+    net::{Ipv4Addr, UdpSocket},
+    str::FromStr,
+};
 
 use bitvec::prelude::*;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -24,6 +27,7 @@ fn main() -> anyhow::Result<()> {
                         id: 1234,
                         qr: true,
                         qd_count: 1,
+                        an_count: 1,
                         ..Default::default()
                     },
                     questions: vec![Question {
@@ -31,6 +35,11 @@ fn main() -> anyhow::Result<()> {
                         qtype: QType::A,
                         qclass: QClass::IN,
                     }],
+                    answers: vec![ResourceRecord::a_in(
+                        "codecrafters.io".parse()?,
+                        60,
+                        "8.8.8.8".parse()?,
+                    )],
                 };
                 let response = msg.to_bytes();
                 udp_socket
@@ -50,6 +59,7 @@ fn main() -> anyhow::Result<()> {
 pub struct DnsMessage {
     header: Header,
     questions: Vec<Question>,
+    answers: Vec<ResourceRecord>,
 }
 
 impl DnsMessage {
@@ -59,11 +69,15 @@ impl DnsMessage {
         for q in &self.questions {
             buf.put(q.to_bytes());
         }
+        for a in &self.answers {
+            buf.put(a.to_bytes());
+        }
 
         buf.freeze()
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Question {
     qname: QName,
     qtype: QType,
@@ -81,6 +95,7 @@ impl Question {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QName(Vec<Label>);
 
 impl QName {
@@ -107,6 +122,7 @@ impl FromStr for QName {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Label(Vec<u8>);
 
 impl Label {
@@ -119,10 +135,11 @@ impl Label {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u16)]
 pub enum QType {
-    A = 1,       // a host address
+    #[default]
+    A = 1, // a host address
     NS = 2,      // an authoritative name server
     MD = 3,      // a mail destination (Obsolete - use MX)
     MF = 4,      // a mail forwarder (Obsolete - use MX)
@@ -144,13 +161,49 @@ pub enum QType {
     STAR = 255,  // A request for all records
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u16)]
 pub enum QClass {
+    #[default]
     IN = 1, // the Internet
     CS = 2, // the CSNET class (Obsolete - used only for examples in some obsolete RFCs)
     CH = 3, // the CHAOS class
     HS = 4, // Hesiod [Dyer 87]
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceRecord {
+    qname: QName,
+    r#type: QType,
+    class: QClass,
+    ttl: u32,
+    rd_length: u16,
+    rd_data: Bytes,
+}
+
+impl ResourceRecord {
+    pub fn a_in(qname: QName, ttl: u32, addr: Ipv4Addr) -> Self {
+        Self {
+            qname,
+            r#type: QType::A,
+            class: QClass::IN,
+            ttl,
+            rd_length: 4,
+            rd_data: Bytes::copy_from_slice(addr.octets().as_slice()),
+        }
+    }
+
+    pub fn to_bytes(&self) -> Bytes {
+        let mut buf = BytesMut::new();
+        buf.put(self.qname.to_bytes());
+        buf.put_u16(self.r#type as u16);
+        buf.put_u16(self.class as u16);
+        buf.put_u32(self.ttl);
+        buf.put_u16(self.rd_length);
+        buf.put(self.rd_data.clone());
+
+        buf.freeze()
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
