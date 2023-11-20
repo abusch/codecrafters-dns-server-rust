@@ -7,7 +7,7 @@ use std::{
 };
 
 use bitvec::prelude::*;
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 fn main() -> anyhow::Result<()> {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
@@ -15,17 +15,27 @@ fn main() -> anyhow::Result<()> {
 
     // Uncomment this block to pass the first stage
     let udp_socket = UdpSocket::bind("127.0.0.1:2053").expect("Failed to bind to address");
-    let mut buf = [0; 512];
+    let mut buf = BytesMut::with_capacity(512);
 
     loop {
+        buf.clear();
         match udp_socket.recv_from(&mut buf) {
             Ok((size, source)) => {
-                let _received_data = String::from_utf8_lossy(&buf[0..size]);
+                let mut received_data = buf.split().freeze();
                 println!("Received {} bytes from {}", size, source);
+                let header = Header::from_bytes(&mut received_data)?;
+
                 let msg = DnsMessage {
                     header: Header {
-                        id: 1234,
-                        qr: true,
+                        id: header.id,
+                        qr: true, // response
+                        opcode: header.opcode,
+                        authoritative_answer: false,
+                        truncation: false,
+                        recursion_desired: header.recursion_desired,
+                        recursion_available: false,
+                        reserved: 0,
+                        response_code: if header.opcode == 0 { 0 } else { 4 },
                         qd_count: 1,
                         an_count: 1,
                         ..Default::default()
@@ -239,6 +249,42 @@ impl Header {
         ns_count: 0,
         ar_count: 0,
     };
+
+    pub fn from_bytes(bytes: &mut Bytes) -> anyhow::Result<Self> {
+        let id = bytes.get_u16();
+
+        let d = bytes.get_u16();
+        let bits = d.view_bits::<Msb0>();
+        let qr = bits[0];
+        let opcode: u8 = bits[1..=4].load_be();
+        let authoritative_answer = bits[5];
+        let truncation = bits[6];
+        let recursion_desired = bits[7];
+        let recursion_available = bits[8];
+        let reserved = bits[9..=11].load_be();
+        let response_code = bits[12..=15].load_be();
+
+        let qd_count = bytes.get_u16();
+        let an_count = bytes.get_u16();
+        let ns_count = bytes.get_u16();
+        let ar_count = bytes.get_u16();
+
+        Ok(Self {
+            id,
+            qr,
+            opcode,
+            authoritative_answer,
+            truncation,
+            recursion_desired,
+            recursion_available,
+            reserved,
+            response_code,
+            qd_count,
+            an_count,
+            ns_count,
+            ar_count,
+        })
+    }
 
     pub fn to_bytes(&self) -> Bytes {
         let mut data = [0u8; 12];
