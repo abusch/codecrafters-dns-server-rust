@@ -42,8 +42,8 @@ fn main() -> anyhow::Result<()> {
                     },
                     questions: vec![Question {
                         qname: msg_in.questions[0].qname.clone(),
-                        qtype: QType::A,
-                        qclass: QClass::IN,
+                        qtype: QType::A as u16,
+                        qclass: QClass::IN as u16,
                     }],
                     // questions: vec![Question {
                     //     qname: "codecrafters.io".parse()?,
@@ -110,15 +110,19 @@ impl DnsMessage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Question {
     qname: QName,
-    qtype: QType,
-    qclass: QClass,
+    // qtype: QType,
+    // qclass: QClass,
+    qtype: u16,
+    qclass: u16,
 }
 
 impl Question {
     pub fn from_bytes(bytes: &mut Bytes) -> Result<Self> {
         let qname = QName::from_bytes(bytes)?;
-        let qtype = QType::try_from(bytes.get_u16())?;
-        let qclass = QClass::try_from(bytes.get_u16())?;
+        // let qtype = QType::try_from(bytes.get_u16())?;
+        // let qclass = QClass::try_from(bytes.get_u16())?;
+        let qtype = bytes.get_u16();
+        let qclass = bytes.get_u16();
 
         Ok(Self {
             qname,
@@ -130,8 +134,8 @@ impl Question {
     pub fn to_bytes(&self) -> Bytes {
         let mut buf = BytesMut::new();
         buf.put(self.qname.to_bytes());
-        buf.put_u16(self.qtype as u16);
-        buf.put_u16(self.qclass as u16);
+        buf.put_u16(self.qtype);
+        buf.put_u16(self.qclass);
 
         buf.freeze()
     }
@@ -259,8 +263,8 @@ impl TryFrom<u16> for QClass {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceRecord {
     qname: QName,
-    r#type: QType,
-    class: QClass,
+    r#type: u16,
+    class: u16,
     ttl: u32,
     rd_length: u16,
     rd_data: Bytes,
@@ -270,8 +274,8 @@ impl ResourceRecord {
     pub fn a_in(qname: QName, ttl: u32, addr: Ipv4Addr) -> Self {
         Self {
             qname,
-            r#type: QType::A,
-            class: QClass::IN,
+            r#type: QType::A as u16,
+            class: QClass::IN as u16,
             ttl,
             rd_length: 4,
             rd_data: Bytes::copy_from_slice(addr.octets().as_slice()),
@@ -281,8 +285,8 @@ impl ResourceRecord {
     pub fn to_bytes(&self) -> Bytes {
         let mut buf = BytesMut::new();
         buf.put(self.qname.to_bytes());
-        buf.put_u16(self.r#type as u16);
-        buf.put_u16(self.class as u16);
+        buf.put_u16(self.r#type);
+        buf.put_u16(self.class);
         buf.put_u32(self.ttl);
         buf.put_u16(self.rd_length);
         buf.put(self.rd_data.clone());
