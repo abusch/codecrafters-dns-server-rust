@@ -198,7 +198,8 @@ impl Label {
 #[repr(u16)]
 pub enum QType {
     #[default]
-    A = 1, // a host address
+    UNKNOWN = 0, // Shouldn't be here, but the tester sometimes sends this...
+    A = 1,       // a host address
     NS = 2,      // an authoritative name server
     MD = 3,      // a mail destination (Obsolete - use MX)
     MF = 4,      // a mail forwarder (Obsolete - use MX)
@@ -225,6 +226,7 @@ impl TryFrom<u16> for QType {
 
     fn try_from(value: u16) -> std::prelude::v1::Result<Self, Self::Error> {
         match value {
+            0 => Ok(Self::UNKNOWN),
             1 => Ok(Self::A),
             _ => bail!("Not implemented or invalid! {value}"),
         }
@@ -235,6 +237,7 @@ impl TryFrom<u16> for QType {
 #[repr(u16)]
 pub enum QClass {
     #[default]
+    UNKNOWN = 0, // Shouldn't be here but the tester sometimes sends this...
     IN = 1, // the Internet
     CS = 2, // the CSNET class (Obsolete - used only for examples in some obsolete RFCs)
     CH = 3, // the CHAOS class
@@ -246,6 +249,7 @@ impl TryFrom<u16> for QClass {
 
     fn try_from(value: u16) -> std::prelude::v1::Result<Self, Self::Error> {
         match value {
+            0 => Ok(Self::UNKNOWN),
             1 => Ok(Self::IN),
             _ => bail!("Not implemented or invalid! {value}"),
         }
