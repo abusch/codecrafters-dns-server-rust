@@ -226,7 +226,7 @@ impl TryFrom<u16> for QType {
     fn try_from(value: u16) -> std::prelude::v1::Result<Self, Self::Error> {
         match value {
             1 => Ok(Self::A),
-            _ => bail!("Not implemented or invalid!"),
+            _ => bail!("Not implemented or invalid! {value}"),
         }
     }
 }
@@ -247,7 +247,7 @@ impl TryFrom<u16> for QClass {
     fn try_from(value: u16) -> std::prelude::v1::Result<Self, Self::Error> {
         match value {
             1 => Ok(Self::IN),
-            _ => bail!("Not implemented or invalid!"),
+            _ => bail!("Not implemented or invalid! {value}"),
         }
     }
 }
