@@ -6,6 +6,7 @@ use std::{
     str::FromStr,
 };
 
+use anyhow::{bail, Result};
 use bitvec::prelude::*;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
@@ -22,39 +23,40 @@ fn main() -> anyhow::Result<()> {
             Ok((size, source)) => {
                 let mut received_data = Bytes::copy_from_slice(&buf[..size]);
                 println!("Received {} bytes from {}", size, source);
-                let header = if size != 0 {
-                    Header::from_bytes(&mut received_data)?
-                } else {
-                    Header::TEST
-                };
-
-                let msg = DnsMessage {
+                let msg_in = DnsMessage::from_bytes(&mut received_data)?;
+                // let header = Header::from_bytes(&mut received_data)?;
+                let msg_out = DnsMessage {
                     header: Header {
-                        id: header.id,
+                        id: msg_in.header.id,
                         qr: true, // response
-                        opcode: header.opcode,
+                        opcode: msg_in.header.opcode,
                         authoritative_answer: false,
                         truncation: false,
-                        recursion_desired: header.recursion_desired,
+                        recursion_desired: msg_in.header.recursion_desired,
                         recursion_available: false,
                         reserved: 0,
-                        response_code: if header.opcode == 0 { 0 } else { 4 },
+                        response_code: if msg_in.header.opcode == 0 { 0 } else { 4 },
                         qd_count: 1,
                         an_count: 1,
                         ..Default::default()
                     },
                     questions: vec![Question {
-                        qname: "codecrafters.io".parse()?,
+                        qname: msg_in.questions[0].qname.clone(),
                         qtype: QType::A,
                         qclass: QClass::IN,
                     }],
+                    // questions: vec![Question {
+                    //     qname: "codecrafters.io".parse()?,
+                    //     qtype: QType::A,
+                    //     qclass: QClass::IN,
+                    // }],
                     answers: vec![ResourceRecord::a_in(
-                        "codecrafters.io".parse()?,
+                        msg_in.questions[0].qname.clone(),
                         60,
                         "8.8.8.8".parse()?,
                     )],
                 };
-                let response = msg.to_bytes();
+                let response = msg_out.to_bytes();
                 udp_socket
                     .send_to(&response, source)
                     .expect("Failed to send response");
@@ -76,6 +78,21 @@ pub struct DnsMessage {
 }
 
 impl DnsMessage {
+    pub fn from_bytes(bytes: &mut Bytes) -> Result<Self> {
+        let header = Header::from_bytes(bytes)?;
+        let mut questions = Vec::new();
+        for _ in 0..header.qd_count {
+            let q = Question::from_bytes(bytes)?;
+            questions.push(q);
+        }
+
+        Ok(Self {
+            header,
+            questions,
+            answers: Vec::new(),
+        })
+    }
+
     pub fn to_bytes(&self) -> Bytes {
         let mut buf = BytesMut::new();
         buf.put(self.header.to_bytes());
@@ -98,6 +115,18 @@ pub struct Question {
 }
 
 impl Question {
+    pub fn from_bytes(bytes: &mut Bytes) -> Result<Self> {
+        let qname = QName::from_bytes(bytes)?;
+        let qtype = QType::try_from(bytes.get_u16())?;
+        let qclass = QClass::try_from(bytes.get_u16())?;
+
+        Ok(Self {
+            qname,
+            qtype,
+            qclass,
+        })
+    }
+
     pub fn to_bytes(&self) -> Bytes {
         let mut buf = BytesMut::new();
         buf.put(self.qname.to_bytes());
@@ -112,6 +141,16 @@ impl Question {
 pub struct QName(Vec<Label>);
 
 impl QName {
+    pub fn from_bytes(bytes: &mut Bytes) -> Result<Self> {
+        let mut labels = Vec::new();
+        while bytes[0] != 0 {
+            let label = Label::from_bytes(bytes)?;
+            labels.push(label);
+        }
+
+        Ok(Self(labels))
+    }
+
     pub fn to_bytes(&self) -> Bytes {
         let mut buf = BytesMut::new();
         for label in &self.0 {
@@ -139,6 +178,13 @@ impl FromStr for QName {
 pub struct Label(Vec<u8>);
 
 impl Label {
+    pub fn from_bytes(bytes: &mut Bytes) -> Result<Self> {
+        let len = bytes.get_u8();
+        let data = bytes.copy_to_bytes(len as usize);
+
+        Ok(Self(data.to_vec()))
+    }
+
     pub fn to_bytes(&self) -> Bytes {
         let mut buf = BytesMut::new();
         buf.put_u8(self.0.len() as u8);
@@ -174,6 +220,17 @@ pub enum QType {
     STAR = 255,  // A request for all records
 }
 
+impl TryFrom<u16> for QType {
+    type Error = anyhow::Error;
+
+    fn try_from(value: u16) -> std::prelude::v1::Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::A),
+            _ => bail!("Not implemented or invalid!"),
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u16)]
 pub enum QClass {
@@ -182,6 +239,17 @@ pub enum QClass {
     CS = 2, // the CSNET class (Obsolete - used only for examples in some obsolete RFCs)
     CH = 3, // the CHAOS class
     HS = 4, // Hesiod [Dyer 87]
+}
+
+impl TryFrom<u16> for QClass {
+    type Error = anyhow::Error;
+
+    fn try_from(value: u16) -> std::prelude::v1::Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::IN),
+            _ => bail!("Not implemented or invalid!"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -237,22 +305,6 @@ pub struct Header {
 }
 
 impl Header {
-    pub const TEST: Self = Self {
-        id: 1234,
-        qr: true,
-        opcode: 0,
-        authoritative_answer: false,
-        truncation: false,
-        recursion_desired: false,
-        recursion_available: false,
-        reserved: 0,
-        response_code: 0,
-        qd_count: 0,
-        an_count: 0,
-        ns_count: 0,
-        ar_count: 0,
-    };
-
     pub fn from_bytes(bytes: &mut Bytes) -> anyhow::Result<Self> {
         let id = bytes.get_u16();
 
