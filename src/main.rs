@@ -24,7 +24,18 @@ fn main() -> anyhow::Result<()> {
                 let mut received_data = Bytes::copy_from_slice(&buf[..size]);
                 println!("Received {} bytes from {}", size, source);
                 let msg_in = DnsMessage::from_bytes(&mut received_data)?;
-                // let header = Header::from_bytes(&mut received_data)?;
+
+                let mut questions = Vec::new();
+                let mut answers = Vec::new();
+                for question in &msg_in.questions {
+                    questions.push(question.clone());
+                    answers.push(ResourceRecord::a_in(
+                        question.qname.clone(),
+                        60,
+                        "8.8.8.8".parse()?,
+                    ))
+                }
+
                 let msg_out = DnsMessage {
                     header: Header {
                         id: msg_in.header.id,
@@ -36,25 +47,12 @@ fn main() -> anyhow::Result<()> {
                         recursion_available: false,
                         reserved: 0,
                         response_code: if msg_in.header.opcode == 0 { 0 } else { 4 },
-                        qd_count: 1,
-                        an_count: 1,
+                        qd_count: questions.len() as u16,
+                        an_count: answers.len() as u16,
                         ..Default::default()
                     },
-                    questions: vec![Question {
-                        qname: msg_in.questions[0].qname.clone(),
-                        qtype: QType::A as u16,
-                        qclass: QClass::IN as u16,
-                    }],
-                    // questions: vec![Question {
-                    //     qname: "codecrafters.io".parse()?,
-                    //     qtype: QType::A,
-                    //     qclass: QClass::IN,
-                    // }],
-                    answers: vec![ResourceRecord::a_in(
-                        msg_in.questions[0].qname.clone(),
-                        60,
-                        "8.8.8.8".parse()?,
-                    )],
+                    questions,
+                    answers,
                 };
                 let response = msg_out.to_bytes();
                 udp_socket
@@ -79,10 +77,15 @@ pub struct DnsMessage {
 
 impl DnsMessage {
     pub fn from_bytes(bytes: &mut Bytes) -> Result<Self> {
+        // Keep a reference to the whole so we can resolve label pointers
+        let payload = bytes.clone();
+
         let header = Header::from_bytes(bytes)?;
         let mut questions = Vec::new();
+
         for _ in 0..header.qd_count {
-            let q = Question::from_bytes(bytes)?;
+            let mut q = Question::from_bytes(bytes)?;
+            q.resolve_labels(&payload);
             questions.push(q);
         }
 
@@ -139,6 +142,15 @@ impl Question {
 
         buf.freeze()
     }
+
+    pub fn resolve_labels(&mut self, payload: &Bytes) {
+        self.qname.0.iter_mut().for_each(|label| {
+            if let Label::Ptr(offset) = label {
+                *label = Label::from_bytes(&mut payload.slice((*offset as usize)..))
+                    .expect("No label found in payload at offset {offset}!")
+            }
+        });
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,9 +159,13 @@ pub struct QName(Vec<Label>);
 impl QName {
     pub fn from_bytes(bytes: &mut Bytes) -> Result<Self> {
         let mut labels = Vec::new();
-        while bytes[0] != 0 {
-            let label = Label::from_bytes(bytes)?;
+        while let Some(label) = Label::from_bytes(bytes) {
+            let is_ptr = label.is_ptr();
             labels.push(label);
+
+            if is_ptr {
+                break;
+            }
         }
 
         Ok(Self(labels))
@@ -172,29 +188,58 @@ impl FromStr for QName {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let labels = s
             .split('.')
-            .map(|label| Label(label.as_bytes().to_vec()))
+            .map(|label| Label::Full(Bytes::copy_from_slice(label.as_bytes())))
             .collect();
         Ok(Self(labels))
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Label(Vec<u8>);
+pub enum Label {
+    Ptr(u16),
+    Full(Bytes),
+}
+
+// #[derive(Debug, Clone, PartialEq, Eq)]
+// pub struct Label(Vec<u8>);
 
 impl Label {
-    pub fn from_bytes(bytes: &mut Bytes) -> Result<Self> {
-        let len = bytes.get_u8();
-        let data = bytes.copy_to_bytes(len as usize);
+    const PTR_MASK: u8 = 0b11000000;
 
-        Ok(Self(data.to_vec()))
+    pub fn from_bytes(bytes: &mut Bytes) -> Option<Self> {
+        let len = bytes.get_u8();
+        if len == 0 {
+            None
+        } else if len & Self::PTR_MASK != 0 {
+            let n = bytes.get_u8();
+            let mut offset = 0_u16;
+            offset |= ((len & !Self::PTR_MASK) as u16) << 8;
+            offset |= n as u16;
+            Some(Self::Ptr(offset))
+        } else {
+            let data = bytes.copy_to_bytes(len as usize);
+            Some(Self::Full(data))
+        }
     }
 
     pub fn to_bytes(&self) -> Bytes {
         let mut buf = BytesMut::new();
-        buf.put_u8(self.0.len() as u8);
-        buf.put(self.0.as_slice());
+        match self {
+            Label::Ptr(offset) => buf.put_u16(offset | ((Self::PTR_MASK as u16) << 8)),
+            Label::Full(data) => {
+                buf.put_u8(data.len() as u8);
+                buf.put(data.slice(..));
+            }
+        }
 
         buf.freeze()
+    }
+
+    pub fn is_ptr(&self) -> bool {
+        match self {
+            Label::Ptr(_) => true,
+            Label::Full(_) => false,
+        }
     }
 }
 
