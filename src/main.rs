@@ -15,13 +15,12 @@ fn main() -> anyhow::Result<()> {
 
     // Uncomment this block to pass the first stage
     let udp_socket = UdpSocket::bind("127.0.0.1:2053").expect("Failed to bind to address");
-    let mut buf = BytesMut::with_capacity(512);
+    let mut buf = [0u8; 512];
 
     loop {
-        buf.clear();
         match udp_socket.recv_from(&mut buf) {
             Ok((size, source)) => {
-                let mut received_data = buf.split().freeze();
+                let mut received_data = Bytes::copy_from_slice(&buf[..size]);
                 println!("Received {} bytes from {}", size, source);
                 let header = if size != 0 {
                     Header::from_bytes(&mut received_data)?
