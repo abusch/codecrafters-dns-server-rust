@@ -54,7 +54,7 @@ fn main() -> anyhow::Result<()> {
                     };
                     msg.to_bytes()
                 } else {
-                    Bytes::new()
+                    Header::TEST.to_bytes()
                 };
                 udp_socket
                     .send_to(&response, source)
