@@ -23,35 +23,39 @@ fn main() -> anyhow::Result<()> {
             Ok((size, source)) => {
                 let mut received_data = buf.split().freeze();
                 println!("Received {} bytes from {}", size, source);
-                let header = Header::from_bytes(&mut received_data)?;
+                let response = if size != 0 {
+                    let header = Header::from_bytes(&mut received_data)?;
 
-                let msg = DnsMessage {
-                    header: Header {
-                        id: header.id,
-                        qr: true, // response
-                        opcode: header.opcode,
-                        authoritative_answer: false,
-                        truncation: false,
-                        recursion_desired: header.recursion_desired,
-                        recursion_available: false,
-                        reserved: 0,
-                        response_code: if header.opcode == 0 { 0 } else { 4 },
-                        qd_count: 1,
-                        an_count: 1,
-                        ..Default::default()
-                    },
-                    questions: vec![Question {
-                        qname: "codecrafters.io".parse()?,
-                        qtype: QType::A,
-                        qclass: QClass::IN,
-                    }],
-                    answers: vec![ResourceRecord::a_in(
-                        "codecrafters.io".parse()?,
-                        60,
-                        "8.8.8.8".parse()?,
-                    )],
+                    let msg = DnsMessage {
+                        header: Header {
+                            id: header.id,
+                            qr: true, // response
+                            opcode: header.opcode,
+                            authoritative_answer: false,
+                            truncation: false,
+                            recursion_desired: header.recursion_desired,
+                            recursion_available: false,
+                            reserved: 0,
+                            response_code: if header.opcode == 0 { 0 } else { 4 },
+                            qd_count: 1,
+                            an_count: 1,
+                            ..Default::default()
+                        },
+                        questions: vec![Question {
+                            qname: "codecrafters.io".parse()?,
+                            qtype: QType::A,
+                            qclass: QClass::IN,
+                        }],
+                        answers: vec![ResourceRecord::a_in(
+                            "codecrafters.io".parse()?,
+                            60,
+                            "8.8.8.8".parse()?,
+                        )],
+                    };
+                    msg.to_bytes()
+                } else {
+                    Bytes::new()
                 };
-                let response = msg.to_bytes();
                 udp_socket
                     .send_to(&response, source)
                     .expect("Failed to send response");
