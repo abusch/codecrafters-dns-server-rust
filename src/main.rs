@@ -2,17 +2,23 @@
 // use std::net::UdpSocket;
 
 use std::{
-    net::{Ipv4Addr, UdpSocket},
+    net::{Ipv4Addr, SocketAddrV4, UdpSocket},
     str::FromStr,
 };
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use bitvec::prelude::*;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use rand::random;
 
 fn main() -> anyhow::Result<()> {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     println!("Logs from your program will appear here!");
+
+    let resolver = std::env::args()
+        .nth(2)
+        .map(|s| SocketAddrV4::from_str(&s))
+        .transpose()?;
 
     // Uncomment this block to pass the first stage
     let udp_socket = UdpSocket::bind("127.0.0.1:2053").expect("Failed to bind to address");
@@ -27,15 +33,23 @@ fn main() -> anyhow::Result<()> {
 
                 let mut questions = Vec::new();
                 let mut answers = Vec::new();
-                for question in &msg_in.questions {
-                    questions.push(question.clone());
-                    answers.push(ResourceRecord::a_in(
-                        question.qname.clone(),
-                        60,
-                        "8.8.8.8".parse()?,
-                    ))
-                }
 
+                if let Some(resolver) = resolver {
+                    for q in &msg_in.questions {
+                        let response = resolve(resolver, q.clone())?;
+                        questions.push(q.clone());
+                        answers.push(response.answers[0].clone());
+                    }
+                } else {
+                    for question in &msg_in.questions {
+                        questions.push(question.clone());
+                        answers.push(ResourceRecord::a_in(
+                            question.qname.clone(),
+                            60,
+                            "8.8.8.8".parse()?,
+                        ))
+                    }
+                }
                 let msg_out = DnsMessage {
                     header: Header {
                         id: msg_in.header.id,
@@ -434,5 +448,40 @@ impl Header {
         d6.store_be(self.ar_count);
 
         Bytes::copy_from_slice(&data)
+    }
+}
+
+pub fn resolve(resolver: SocketAddrV4, q: Question) -> anyhow::Result<DnsMessage> {
+    let socket = UdpSocket::bind("0.0.0.0:0").context("Failed to bind UDP socket")?;
+    let id = random::<u16>();
+
+    let msg = DnsMessage {
+        header: Header {
+            id,
+            qd_count: 1,
+            ..Default::default()
+        },
+        questions: vec![q],
+        answers: vec![],
+    };
+    let bytes = msg.to_bytes();
+
+    let _ = socket
+        .send_to(&bytes, resolver)
+        .context("Failed to send message to resolver")?;
+    let mut buf = [0u8; 512];
+    // wait for response
+    loop {
+        let size = socket.recv(&mut buf).context("Failed to read UDP packet")?;
+        let mut received_data = Bytes::copy_from_slice(&buf[..size]);
+        let resp =
+            DnsMessage::from_bytes(&mut received_data).context("Failed to parse DNS message")?;
+        if resp.header.id != id {
+            println!("Got DNS message with wrong id. Ignoring...");
+            continue;
+        } else {
+            println!("Got response from resolver");
+            return Ok(resp);
+        }
     }
 }
