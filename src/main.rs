@@ -103,10 +103,16 @@ impl DnsMessage {
             questions.push(q);
         }
 
+        let mut answers = Vec::new();
+        for _ in 0..header.an_count {
+            let a = ResourceRecord::from_bytes(bytes)?;
+            answers.push(a);
+        }
+
         Ok(Self {
             header,
             questions,
-            answers: Vec::new(),
+            answers,
         })
     }
 
@@ -213,9 +219,6 @@ pub enum Label {
     Ptr(u16),
     Full(Bytes),
 }
-
-// #[derive(Debug, Clone, PartialEq, Eq)]
-// pub struct Label(Vec<u8>);
 
 impl Label {
     const PTR_MASK: u8 = 0b11000000;
@@ -339,6 +342,24 @@ impl ResourceRecord {
             rd_length: 4,
             rd_data: Bytes::copy_from_slice(addr.octets().as_slice()),
         }
+    }
+
+    pub fn from_bytes(bytes: &mut Bytes) -> anyhow::Result<Self> {
+        let qname = QName::from_bytes(bytes)?;
+        let r#type = bytes.get_u16();
+        let class = bytes.get_u16();
+        let ttl = bytes.get_u32();
+        let rd_length = bytes.get_u16();
+        let rd_data = bytes.copy_to_bytes(rd_length as usize);
+
+        Ok(Self {
+            qname,
+            r#type,
+            class,
+            ttl,
+            rd_length,
+            rd_data,
+        })
     }
 
     pub fn to_bytes(&self) -> Bytes {
