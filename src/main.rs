@@ -37,8 +37,8 @@ fn main() -> anyhow::Result<()> {
                 if let Some(resolver) = resolver {
                     for q in &msg_in.questions {
                         let response = resolve(resolver, q.clone())?;
-                        questions.push(q.clone());
                         if !response.answers.is_empty() {
+                            questions.push(q.clone());
                             answers.push(response.answers[0].clone());
                         }
                     }
