@@ -83,6 +83,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Clone)]
 pub struct DnsMessage {
     header: Header,
     questions: Vec<Question>,
@@ -485,6 +486,7 @@ pub fn resolve(resolver: SocketAddrV4, q: Question) -> anyhow::Result<DnsMessage
         questions: vec![q],
         answers: vec![],
     };
+    println!("Sending msg to resolver: {msg:?}");
     let bytes = msg.to_bytes();
 
     let _ = socket
@@ -501,7 +503,7 @@ pub fn resolve(resolver: SocketAddrV4, q: Question) -> anyhow::Result<DnsMessage
             println!("Got DNS message with wrong id. Ignoring...");
             continue;
         } else {
-            println!("Got response from resolver");
+            println!("Got response from resolver: {resp:?}");
             return Ok(resp);
         }
     }
