@@ -30,6 +30,7 @@ fn main() -> anyhow::Result<()> {
                 let mut received_data = Bytes::copy_from_slice(&buf[..size]);
                 println!("Received {} bytes from {}", size, source);
                 let msg_in = DnsMessage::from_bytes(&mut received_data)?;
+                println!("Incoming message: {msg_in:?}");
 
                 let mut questions = Vec::new();
                 let mut answers = Vec::new();
