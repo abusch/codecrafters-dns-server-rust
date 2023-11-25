@@ -1,6 +1,3 @@
-// Uncomment this block to pass the first stage
-// use std::net::UdpSocket;
-
 use std::{
     net::{Ipv4Addr, SocketAddrV4, UdpSocket},
     str::FromStr,
@@ -12,15 +9,12 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use rand::random;
 
 fn main() -> anyhow::Result<()> {
-    // You can use print statements as follows for debugging, they'll be visible when running tests.
-    println!("Logs from your program will appear here!");
-
     let resolver = std::env::args()
         .nth(2)
         .map(|s| SocketAddrV4::from_str(&s))
-        .transpose()?;
+        .transpose()
+        .context("--resolver was not a valid IP address")?;
 
-    // Uncomment this block to pass the first stage
     let udp_socket = UdpSocket::bind("127.0.0.1:2053").expect("Failed to bind to address");
     let mut buf = [0u8; 512];
 
@@ -36,6 +30,7 @@ fn main() -> anyhow::Result<()> {
                 let mut answers = Vec::new();
 
                 if let Some(resolver) = resolver {
+                    // Forward queries to the resolver
                     for q in &msg_in.questions {
                         let response = resolve(resolver, q.clone())?;
                         if !response.answers.is_empty() {
@@ -44,6 +39,7 @@ fn main() -> anyhow::Result<()> {
                         }
                     }
                 } else {
+                    // Return "dummy" answers
                     for question in &msg_in.questions {
                         questions.push(question.clone());
                         answers.push(ResourceRecord::a_in(
@@ -91,22 +87,27 @@ pub struct DnsMessage {
     header: Header,
     questions: Vec<Question>,
     answers: Vec<ResourceRecord>,
+    // TODO: Authority
+    // TODO: Additional
 }
 
 impl DnsMessage {
     pub fn from_bytes(bytes: &mut Bytes) -> Result<Self> {
-        // Keep a reference to the whole so we can resolve label pointers
+        // Keep a reference to the whole payload so we can resolve label pointers later
         let payload = bytes.clone();
 
+        // Parse header
         let header = Header::from_bytes(bytes)?;
-        let mut questions = Vec::new();
 
+        // Parse questions
+        let mut questions = Vec::new();
         for _ in 0..header.qd_count {
             let mut q = Question::from_bytes(bytes)?;
             q.resolve_labels(&payload);
             questions.push(q);
         }
 
+        // Parse answers
         let mut answers = Vec::new();
         for _ in 0..header.an_count {
             let a = ResourceRecord::from_bytes(bytes)?;
@@ -137,8 +138,6 @@ impl DnsMessage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Question {
     qname: QName,
-    // qtype: QType,
-    // qclass: QClass,
     qtype: u16,
     qclass: u16,
 }
@@ -146,8 +145,6 @@ pub struct Question {
 impl Question {
     pub fn from_bytes(bytes: &mut Bytes) -> Result<Self> {
         let qname = QName::from_bytes(bytes)?;
-        // let qtype = QType::try_from(bytes.get_u16())?;
-        // let qclass = QClass::try_from(bytes.get_u16())?;
         let qtype = bytes.get_u16();
         let qclass = bytes.get_u16();
 
