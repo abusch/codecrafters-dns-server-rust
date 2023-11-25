@@ -168,12 +168,20 @@ impl Question {
     }
 
     pub fn resolve_labels(&mut self, payload: &Bytes) {
-        self.qname.0.iter_mut().for_each(|label| {
-            if let Label::Ptr(offset) = label {
-                *label = Label::from_bytes(&mut payload.slice((*offset as usize)..))
-                    .expect("No label found in payload at offset {offset}!")
-            }
-        });
+        let labels = self
+            .qname
+            .0
+            .iter()
+            .flat_map(|label| match label {
+                Label::Full(_) => vec![label.clone()],
+                Label::Ptr(offset) => {
+                    let qname = QName::from_bytes(&mut payload.slice((*offset as usize)..))
+                        .expect("Invalid QName");
+                    qname.0
+                }
+            })
+            .collect::<Vec<_>>();
+        self.qname.0 = labels;
     }
 }
 
